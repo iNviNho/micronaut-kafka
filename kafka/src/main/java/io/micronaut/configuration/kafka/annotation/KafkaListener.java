@@ -15,6 +15,7 @@
  */
 package io.micronaut.configuration.kafka.annotation;
 
+import io.micronaut.configuration.kafka.processor.ConsumerCreationStrategy;
 import io.micronaut.context.annotation.*;
 import io.micronaut.messaging.annotation.MessageListener;
 import org.apache.kafka.common.IsolationLevel;
@@ -161,6 +162,15 @@ public @interface KafkaListener {
      * @see KafkaListener#threadsValue()
      */
     int threads() default 1;
+
+    /**
+     * Defines the consumer creation strategy to use when processing @Topic annotations
+     * inside of @KafkaListener annotated classes.
+     *
+     * If ConsumerCreationStrategy.PER_TOPIC is used, a new consumer will be created for method that has a @Topic annotation.
+     * If ConsumerCreationStrategy.PER_CLASS is used, a single consumer will be created for the entire class.
+     */
+    ConsumerCreationStrategy consumerCreationStrategy() default ConsumerCreationStrategy.PER_TOPIC;
 
     /**
      * The timeout to use for calls to {@link org.apache.kafka.clients.consumer.Consumer#poll(java.time.Duration)}.

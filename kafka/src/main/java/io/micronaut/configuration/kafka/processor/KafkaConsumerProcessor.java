@@ -65,6 +65,7 @@ import io.micronaut.scheduling.TaskScheduler;
 import jakarta.annotation.PreDestroy;
 import jakarta.inject.Named;
 import jakarta.inject.Singleton;
+import java.util.ArrayList;
 import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.common.IsolationLevel;
@@ -117,6 +118,7 @@ class KafkaConsumerProcessor
     @SuppressWarnings("rawtypes")
     private final AbstractKafkaConsumerConfiguration defaultConsumerConfiguration;
     private final Map<String, ConsumerState> consumers = new ConcurrentHashMap<>();
+    private List<String> kafkaListenersCreated = new ArrayList<>();
 
     private final ConsumerRecordBinderRegistry binderRegistry;
     private final SerdeRegistry serdeRegistry;
@@ -275,12 +277,18 @@ class KafkaConsumerProcessor
 
     @Override
     public void process(BeanDefinition<?> beanDefinition, ExecutableMethod<?, ?> method) {
-        List<AnnotationValue<Topic>> topicAnnotations = method.getDeclaredAnnotationValuesByType(Topic.class);
         final AnnotationValue<KafkaListener> consumerAnnotation = method.getAnnotation(KafkaListener.class);
-        if (CollectionUtils.isEmpty(topicAnnotations)) {
-            topicAnnotations = beanDefinition.getDeclaredAnnotationValuesByType(Topic.class);
+        if (consumerAnnotation == null) {
+            return;
         }
-        if (consumerAnnotation == null || CollectionUtils.isEmpty(topicAnnotations)) {
+        ConsumerCreationStrategy consumerCreationStrategy = consumerAnnotation.enumValue("consumerCreationStrategy", ConsumerCreationStrategy.class)
+            .orElse(ConsumerCreationStrategy.PER_TOPIC);
+        if (consumerCreationStrategy.equals(ConsumerCreationStrategy.PER_CLASS) && kafkaListenersCreated.contains(beanDefinition.getBeanType().getName())) {
+            return; // Listener already created
+        }
+        List<AnnotationValue<Topic>> topicAnnotations = resolveTopicAnnotations(consumerCreationStrategy, method, beanDefinition);
+
+        if (CollectionUtils.isEmpty(topicAnnotations)) {
             return; // No topics to consume
         }
         final Class<?> beanType = beanDefinition.getBeanType();
@@ -300,6 +308,24 @@ class KafkaConsumerProcessor
         final Properties properties = createConsumerProperties(consumerAnnotation, consumerConfiguration, clientId, groupId, offsetStrategy);
         configureDeserializers(method, consumerConfiguration);
         submitConsumerThreads(method, clientId, groupId, offsetStrategy, topicAnnotations, consumerAnnotation, consumerConfiguration, properties, beanType);
+        kafkaListenersCreated.add(beanType.getName());
+    }
+
+    protected List<AnnotationValue<Topic>> resolveTopicAnnotations(final ConsumerCreationStrategy consumerCreationStrategy,
+                                                                   final ExecutableMethod<?, ?> method,
+                                                                   final BeanDefinition<?> beanDefinition) {
+        List<AnnotationValue<Topic>> topicAnnotations = beanDefinition.getDeclaredAnnotationValuesByType(Topic.class);
+        if (CollectionUtils.isEmpty(topicAnnotations)) {
+            if (consumerCreationStrategy.equals(ConsumerCreationStrategy.PER_TOPIC)) {
+                topicAnnotations = method.getDeclaredAnnotationValuesByType(Topic.class);
+            } else {
+                topicAnnotations = beanDefinition.getExecutableMethods().stream()
+                    .filter(executableMethod -> executableMethod.hasAnnotation(Topic.class))
+                    .map(m -> m.getAnnotation(Topic.class))
+                    .toList();
+            }
+        }
+        return topicAnnotations;
     }
 
     @Override
@@ -481,36 +507,37 @@ class KafkaConsumerProcessor
                 //noinspection unchecked
                 ca.setKafkaConsumer(kafkaConsumer);
             }
-            topicAnnotations.forEach(a -> setupConsumerSubscription(method, a, consumerBean, kafkaConsumer));
+            setupConsumerSubscription(method, topicAnnotations, consumerBean, kafkaConsumer);
             kafkaConsumerSubscribedEventPublisher.publishEvent(new KafkaConsumerSubscribedEvent(kafkaConsumer));
             final ConsumerInfo consumerInfo = new ConsumerInfo(finalClientId, groupId, offsetStrategy, consumerAnnotation, method);
             final ConsumerState consumerState = consumerInfo.isBatch ?
                 new ConsumerStateBatch(this, consumerInfo, kafkaConsumer, consumerBean) :
                 new ConsumerStateSingle(this, consumerInfo, kafkaConsumer, consumerBean);
+
             consumers.put(finalClientId, consumerState);
             executorService.submit(consumerState::threadPollLoop);
         }
     }
 
-    private static void setupConsumerSubscription(ExecutableMethod<?, ?> method, AnnotationValue<Topic> topicAnnotation, Object consumerBean, Consumer<?, ?> kafkaConsumer) {
-        final String[] topicNames = topicAnnotation.stringValues();
-        final String[] patterns = topicAnnotation.stringValues("patterns");
-        final boolean hasTopics = ArrayUtils.isNotEmpty(topicNames);
-        final boolean hasPatterns = ArrayUtils.isNotEmpty(patterns);
+    private static void setupConsumerSubscription(ExecutableMethod<?, ?> method, List<AnnotationValue<Topic>> topicAnnotations, Object consumerBean, Consumer<?, ?> kafkaConsumer) {
+        final List<String> topicNames = topicAnnotations.stream().flatMap(a -> Arrays.stream(a.stringValues())).toList();
+        final List<String> patterns = topicAnnotations.stream().flatMap(a -> Arrays.stream(a.stringValues("patterns"))).toList();
+        final boolean hasTopics = !topicNames.isEmpty();
+        final boolean hasPatterns = !patterns.isEmpty();
         final String logMethod = LOG.isInfoEnabled() ? logMethod(method) : null;
 
+        // TODO: Only one can be specified (maybe)
         if (!hasTopics && !hasPatterns) {
-            throw new MessagingSystemException("Either a topic or a topic must be specified for method: " + method);
+            throw new MessagingSystemException("Either a topic or a pattern must be specified for method: " + method);
         }
 
         final Optional<ConsumerRebalanceListener> listener = getConsumerRebalanceListener(consumerBean, kafkaConsumer);
 
         if (hasTopics) {
-            final List<String> topics = Arrays.asList(topicNames);
             listener.ifPresentOrElse(
-                l -> kafkaConsumer.subscribe(topics, l),
-                () -> kafkaConsumer.subscribe(topics));
-            LOG.info("Kafka listener [{}] subscribed to topics: {}", logMethod, topics);
+                l -> kafkaConsumer.subscribe(topicNames, l),
+                () -> kafkaConsumer.subscribe(topicNames));
+            LOG.info("Kafka listener [{}] subscribed to topics: {}", logMethod, topicNames);
         }
 
         if (hasPatterns) {
