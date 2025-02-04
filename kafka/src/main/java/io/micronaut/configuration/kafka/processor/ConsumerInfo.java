@@ -20,6 +20,7 @@ import io.micronaut.configuration.kafka.annotation.ErrorStrategy;
 import io.micronaut.configuration.kafka.annotation.ErrorStrategyValue;
 import io.micronaut.configuration.kafka.annotation.KafkaListener;
 import io.micronaut.configuration.kafka.annotation.OffsetStrategy;
+import io.micronaut.configuration.kafka.annotation.Topic;
 import io.micronaut.configuration.kafka.seek.KafkaSeekOperations;
 import io.micronaut.core.annotation.*;
 import io.micronaut.core.reflect.ReflectionUtils;
@@ -30,6 +31,8 @@ import io.micronaut.inject.ExecutableMethod;
 import io.micronaut.messaging.Acknowledgement;
 import io.micronaut.messaging.annotation.SendTo;
 import io.micronaut.messaging.exceptions.MessagingSystemException;
+import java.util.HashMap;
+import java.util.stream.Collectors;
 import org.apache.kafka.clients.consumer.Consumer;
 
 import java.time.Duration;
@@ -58,6 +61,7 @@ final class ConsumerInfo {
     @Nullable final String producerTransactionalId;
     final boolean isTransactional;
     final ExecutableMethod<Object, ?> method;
+    final HashMap<String, ExecutableMethod<Object, ?>> methods;
     final String logMethod;
     final boolean autoStartup;
     final boolean isBatch;
@@ -78,7 +82,7 @@ final class ConsumerInfo {
         String groupId,
         OffsetStrategy offsetStrategy,
         AnnotationValue<KafkaListener> kafkaListener,
-        ExecutableMethod<?, ?> method
+        List<ExecutableMethod<?, ?>> methods
     ) {
         this.clientId = clientId;
         this.groupId = groupId;
@@ -93,23 +97,37 @@ final class ConsumerInfo {
         this.producerClientId = kafkaListener.stringValue("producerClientId").orElse(null);
         this.producerTransactionalId = kafkaListener.stringValue("producerTransactionalId").filter(StringUtils::isNotEmpty).orElse(null);
         this.isTransactional = producerTransactionalId != null;
-        this.method = (ExecutableMethod<Object, ?>) method;
+        // TBA: solveable with using method for this
         this.logMethod = method.getDeclaringType().getSimpleName() + "#" + method.getName();
         this.autoStartup = kafkaListener.booleanValue("autoStartup").orElse(true);
         this.isBatch = method.isTrue(KafkaListener.class, "batch");
         this.isBlocking = method.hasAnnotation(Blocking.class);
         this.pollTimeout = method.getValue(KafkaListener.class, "pollTimeout", Duration.class).orElseGet(() -> Duration.ofMillis(100));
+        // problematic
         this.consumerArg = Arrays.stream(method.getArguments()).filter(arg -> Consumer.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
         this.seekArg = Arrays.stream(method.getArguments()).filter(arg -> KafkaSeekOperations.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
         this.ackArg = Arrays.stream(method.getArguments()).filter(arg -> Acknowledgement.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+        // end problematic
         this.trackPartitions = ackArg != null || offsetStrategy == OffsetStrategy.SYNC_PER_RECORD || offsetStrategy == OffsetStrategy.ASYNC_PER_RECORD;
+
+        // TBA: solveable with using method for this
         this.sendToTopics = Optional.ofNullable(method.stringValues(SendTo.class)).filter(ArrayUtils::isNotEmpty).stream().flatMap(Arrays::stream).toList();
+
         this.shouldSendOffsetsToTransaction = offsetStrategy == OffsetStrategy.SEND_TO_TRANSACTION;
+
+        // TBA: solveable with using method for this
         this.returnsOneKafkaMessage = method.getReturnType().getType().isAssignableFrom(KafkaMessage.class) || method.getReturnType().isAsyncOrReactive() && method.getReturnType().getFirstTypeVariable()
             .map(t -> t.getType().isAssignableFrom(KafkaMessage.class)).orElse(false);
+        // TBA: solveable with using method for this
         this.returnsManyKafkaMessages = Iterable.class.isAssignableFrom(method.getReturnType().getType()) && method.getReturnType().getFirstTypeVariable()
             .map(t -> t.getType().isAssignableFrom(KafkaMessage.class)).orElse(false);
-
+        this.methods = methods.stream()
+            .collect(Collectors.toMap(
+                m -> m.getAnnotation(Topic.class).stringValue().orElseThrow(() -> new MessagingSystemException("Missing @Topic annotation")),
+                m -> (ExecutableMethod<Object, ?>) m,
+                (existing, replacement) -> existing,
+                HashMap::new
+            ));
         if (shouldSendOffsetsToTransaction) {
             if (!isTransactional || !method.hasAnnotation(SendTo.class)) {
                 throw new MessagingSystemException("Offset strategy 'SEND_TO_TRANSACTION' can only be used when transaction is enabled and @SendTo is used");

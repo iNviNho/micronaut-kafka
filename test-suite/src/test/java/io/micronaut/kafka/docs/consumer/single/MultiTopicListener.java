@@ -18,17 +18,18 @@ import org.slf4j.Logger;
 public class MultiTopicListener {
     private static final Logger LOG = getLogger(MultiTopicListener.class);
 
-    int count = 0;
+    int countBoo = 0;
+    int countFoo = 0;
 
     @Topic({"boo", "too"})
     void processBoo(String value) {
         LOG.info("Handling boo: {}", value);
-        this.count++;
+        this.countBoo++;
     }
 
     @Topic("foo")
     void processFoo(String value) {
         LOG.info("Handling foo: {}", value);
-        this.count++;
+        this.countFoo++;
     }
 }

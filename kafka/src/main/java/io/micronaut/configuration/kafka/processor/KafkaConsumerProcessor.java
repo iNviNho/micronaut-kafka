@@ -287,6 +287,7 @@ class KafkaConsumerProcessor
             return; // Listener already created
         }
         List<AnnotationValue<Topic>> topicAnnotations = resolveTopicAnnotations(consumerCreationStrategy, method, beanDefinition);
+        List<ExecutableMethod<?, ?>> methods = resolveMethods(consumerCreationStrategy, method, beanDefinition);
 
         if (CollectionUtils.isEmpty(topicAnnotations)) {
             return; // No topics to consume
@@ -307,8 +308,18 @@ class KafkaConsumerProcessor
         final DefaultKafkaConsumerConfiguration<?, ?> consumerConfiguration = new DefaultKafkaConsumerConfiguration<>(consumerConfigurationDefaults);
         final Properties properties = createConsumerProperties(consumerAnnotation, consumerConfiguration, clientId, groupId, offsetStrategy);
         configureDeserializers(method, consumerConfiguration);
-        submitConsumerThreads(method, clientId, groupId, offsetStrategy, topicAnnotations, consumerAnnotation, consumerConfiguration, properties, beanType);
+        submitConsumerThreads(method, clientId, groupId, offsetStrategy, topicAnnotations, consumerAnnotation, consumerConfiguration, properties, beanType, methods);
         kafkaListenersCreated.add(beanType.getName());
+    }
+
+    protected List<ExecutableMethod<?,?>> resolveMethods(ConsumerCreationStrategy consumerCreationStrategy, ExecutableMethod<?,?> method, BeanDefinition<?> beanDefinition) {
+        if (consumerCreationStrategy.equals(ConsumerCreationStrategy.PER_TOPIC)) {
+            return Collections.singletonList(method);
+        } else {
+            return (List<ExecutableMethod<?, ?>>) (List<?>) beanDefinition.getExecutableMethods().stream()
+                .filter(executableMethod -> executableMethod.hasAnnotation(Topic.class))
+                .toList();
+        }
     }
 
     protected List<AnnotationValue<Topic>> resolveTopicAnnotations(final ConsumerCreationStrategy consumerCreationStrategy,
@@ -487,7 +498,8 @@ class KafkaConsumerProcessor
                                        final AnnotationValue<KafkaListener> consumerAnnotation,
                                        final DefaultKafkaConsumerConfiguration<?, ?> consumerConfiguration,
                                        final Properties properties,
-                                       final Class<?> beanType) {
+                                       final Class<?> beanType,
+                                       final List<ExecutableMethod<?, ?>> methods) {
         final int consumerThreads = consumerAnnotation.intValue("threads").orElse(1);
         for (int i = 0; i < consumerThreads; i++) {
             final String finalClientId;
@@ -509,7 +521,7 @@ class KafkaConsumerProcessor
             }
             setupConsumerSubscription(method, topicAnnotations, consumerBean, kafkaConsumer);
             kafkaConsumerSubscribedEventPublisher.publishEvent(new KafkaConsumerSubscribedEvent(kafkaConsumer));
-            final ConsumerInfo consumerInfo = new ConsumerInfo(finalClientId, groupId, offsetStrategy, consumerAnnotation, method);
+            final ConsumerInfo consumerInfo = new ConsumerInfo(finalClientId, groupId, offsetStrategy, consumerAnnotation, method, methods);
             final ConsumerState consumerState = consumerInfo.isBatch ?
                 new ConsumerStateBatch(this, consumerInfo, kafkaConsumer, consumerBean) :
                 new ConsumerStateSingle(this, consumerInfo, kafkaConsumer, consumerBean);

@@ -115,7 +115,8 @@ final class ConsumerStateSingle extends ConsumerState {
     private void process(ConsumerRecord<?, ?> consumerRecord,
         ConsumerRecords<?, ?> consumerRecords) {
         final ExecutableBinder<ConsumerRecord<?, ?>> executableBinder = new DefaultExecutableBinder<>(boundArguments);
-        final Object result = executableBinder.bind(info.method, kafkaConsumerProcessor.getBinderRegistry(), consumerRecord).invoke(consumerBean);
+        var method = info.methods.get(consumerRecord.topic());
+        final Object result = executableBinder.bind(method, kafkaConsumerProcessor.getBinderRegistry(), consumerRecord).invoke(consumerBean);
         if (result != null) {
             final boolean isPublisher = Publishers.isConvertibleToPublisher(result);
             final Flux<?> publisher = isPublisher ? kafkaConsumerProcessor.convertPublisher(result) : Flux.just(result);

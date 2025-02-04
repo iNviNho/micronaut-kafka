@@ -25,7 +25,7 @@ public class ConsumerCreationStrategyTest {
 
             MultiTopicListener listener = ctx.getBean(MultiTopicListener.class);
             await().atMost(10, SECONDS).until(() ->
-                listener.count == 4
+                listener.countBoo == 2 && listener.countFoo == 2
             );
         }
     }
