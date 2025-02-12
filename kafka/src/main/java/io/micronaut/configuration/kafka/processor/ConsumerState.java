@@ -207,10 +207,11 @@ abstract class ConsumerState {
             return; // No consumer records to process
         }
         // Support Kotlin coroutines
-        if (info.method.isSuspend()) {
-            Argument<?> lastArgument = info.method.getArguments()[info.method.getArguments().length - 1];
-            boundArguments.put(lastArgument, null);
-        }
+        // TODO: Tackle this
+        // if (info.method.isSuspend()) {
+        //     Argument<?> lastArgument = info.method.getArguments()[info.method.getArguments().length - 1];
+        //     boundArguments.put(lastArgument, null);
+        // }
         processRecords(consumerRecords, currentOffsets);
         if (failed) {
             return;
@@ -270,17 +271,17 @@ abstract class ConsumerState {
     ) {
         final Flux<RecordMetadata> recordMetadataProducer = publisher
             .flatMap(value -> sendToDestination(value, consumerRecord, consumerRecords));
-
+        var method = info.methods.get(consumerRecord.topic());
         if (isBlocking) {
             List<RecordMetadata> listRecords = recordMetadataProducer.collectList().block();
-            LOG.trace("Method [{}] produced record metadata: {}", info.method, listRecords);
+            LOG.trace("Method [{}] produced record metadata: {}", method, listRecords);
         } else {
-            recordMetadataProducer.subscribe(recordMetadata -> LOG.trace("Method [{}] produced record metadata: {}", info.logMethod, recordMetadata));
+            recordMetadataProducer.subscribe(recordMetadata -> LOG.trace("Method [{}] produced record metadata: {}", method, recordMetadata));
         }
     }
 
     private Publisher<RecordMetadata> sendToDestination(Object value, ConsumerRecord<?, ?> consumerRecord, ConsumerRecords<?, ?> consumerRecords) {
-        if (value == null || info.sendToTopics.isEmpty()) {
+        if (value == null || info.sendToTopics(consumerRecord.topic()).isEmpty()) {
             return Flux.empty();
         }
         final Object key = consumerRecord.key();
@@ -323,8 +324,8 @@ abstract class ConsumerState {
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private void sendToDestination(Producer<?, ?> kafkaProducer, Callback callback, Object key, Object value, ConsumerRecord<?, ?> consumerRecord) {
-        for (String destinationTopic : info.sendToTopics) {
-            if (info.returnsManyKafkaMessages) {
+        for (String destinationTopic : info.sendToTopics(consumerRecord.topic())) {
+            if (info.returnsManyKafkaMessages(consumerRecord.topic())) {
                 final Iterable<KafkaMessage> messages = (Iterable<KafkaMessage>) value;
                 for (KafkaMessage message : messages) {
                     final ProducerRecord producerRecord = createFromMessage(destinationTopic, message);
@@ -332,7 +333,7 @@ abstract class ConsumerState {
                 }
             } else {
                 final ProducerRecord producerRecord;
-                if (info.returnsOneKafkaMessage) {
+                if (info.returnsOneKafkaMessage(consumerRecord.topic())) {
                     producerRecord = createFromMessage(destinationTopic, (KafkaMessage) value);
                 } else {
                     producerRecord = new ProducerRecord(destinationTopic, null, key, value, consumerRecord.headers());
@@ -384,14 +385,14 @@ abstract class ConsumerState {
     }
 
     private Publisher<RecordMetadata> handleSendToError(Throwable error, ConsumerRecords<?, ?> consumerRecords, ConsumerRecord<?, ?> consumerRecord) {
-        handleException("Error occurred processing record [" + consumerRecord + "] with Kafka reactive consumer [" + info.method + "]: " + error.getMessage(), error, consumerRecords, consumerRecord);
+        // handleException("Error occurred processing record [" + consumerRecord + "] with Kafka reactive consumer [" + info.method + "]: " + error.getMessage(), error, consumerRecords, consumerRecord);
 
         if (!info.shouldRedeliver) {
             return Flux.empty();
         }
 
         return redeliver(consumerRecord)
-            .doOnError(ex -> handleException("Redelivery failed for record [" + consumerRecord + "] with Kafka reactive consumer [" + info.method + "]: " + error.getMessage(), ex, consumerRecords, consumerRecord));
+            .doOnError(ex -> handleException("Redelivery failed for record [" + consumerRecord + "] with Kafka reactive consumer : " + error.getMessage(), ex, consumerRecords, consumerRecord));
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })

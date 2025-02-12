@@ -521,7 +521,7 @@ class KafkaConsumerProcessor
             }
             setupConsumerSubscription(method, topicAnnotations, consumerBean, kafkaConsumer);
             kafkaConsumerSubscribedEventPublisher.publishEvent(new KafkaConsumerSubscribedEvent(kafkaConsumer));
-            final ConsumerInfo consumerInfo = new ConsumerInfo(finalClientId, groupId, offsetStrategy, consumerAnnotation, method, methods);
+            final ConsumerInfo consumerInfo = new ConsumerInfo(finalClientId, groupId, offsetStrategy, consumerAnnotation, methods);
             final ConsumerState consumerState = consumerInfo.isBatch ?
                 new ConsumerStateBatch(this, consumerInfo, kafkaConsumer, consumerBean) :
                 new ConsumerStateSingle(this, consumerInfo, kafkaConsumer, consumerBean);

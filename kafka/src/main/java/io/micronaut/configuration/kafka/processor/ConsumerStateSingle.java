@@ -58,7 +58,7 @@ final class ConsumerStateSingle extends ConsumerState {
             return kafkaConsumer.poll(info.pollTimeout);
         } catch (RecordDeserializationException ex) {
             // Try to honor the configured error strategy
-            LOG.trace("Kafka consumer [{}] failed to deserialize value while polling", info.logMethod, ex);
+            LOG.trace("Kafka consumer [{}] failed to deserialize value while polling", info.logMethod(ex.topicPartition().topic()), ex);
             // By default, seek past the record to continue consumption
             kafkaConsumer.seek(ex.topicPartition(), ex.offset() + 1);
             // The error strategy and the exception handler can still decide what to do about this record
@@ -75,7 +75,7 @@ final class ConsumerStateSingle extends ConsumerState {
         while (iterator.hasNext()) {
             final ConsumerRecord<?, ?> consumerRecord = iterator.next();
 
-            LOG.trace("Kafka consumer [{}] received record: {}", info.logMethod, consumerRecord);
+            LOG.trace("Kafka consumer [{}] received record: {}", info.logMethod(consumerRecord.topic()), consumerRecord);
 
             if (info.trackPartitions) {
                 final TopicPartition topicPartition = getTopicPartition(consumerRecord);
@@ -83,8 +83,8 @@ final class ConsumerStateSingle extends ConsumerState {
                 currentOffsets.put(topicPartition, offsetAndMetadata);
             }
 
-            final KafkaSeekOperations seek = Optional.ofNullable(info.seekArg).map(x -> KafkaSeekOperations.newInstance()).orElse(null);
-            Optional.ofNullable(info.seekArg).ifPresent(argument -> boundArguments.put(argument, seek));
+            final KafkaSeekOperations seek = Optional.ofNullable(info.seekArg(consumerRecord.topic())).map(x -> KafkaSeekOperations.newInstance()).orElse(null);
+            Optional.ofNullable(info.seekArg(consumerRecord.topic())).ifPresent(argument -> boundArguments.put(argument, seek));
             Optional.ofNullable(info.ackArg).ifPresent(argument -> boundArguments.put(argument, (KafkaAcknowledgement) () -> kafkaConsumer.commitSync(currentOffsets)));
 
             try {

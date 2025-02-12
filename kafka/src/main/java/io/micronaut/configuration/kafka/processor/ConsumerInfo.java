@@ -28,12 +28,10 @@ import io.micronaut.core.type.Argument;
 import io.micronaut.core.util.ArrayUtils;
 import io.micronaut.core.util.StringUtils;
 import io.micronaut.inject.ExecutableMethod;
-import io.micronaut.messaging.Acknowledgement;
 import io.micronaut.messaging.annotation.SendTo;
 import io.micronaut.messaging.exceptions.MessagingSystemException;
 import java.util.HashMap;
 import java.util.stream.Collectors;
-import org.apache.kafka.clients.consumer.Consumer;
 
 import java.time.Duration;
 import java.util.Arrays;
@@ -60,21 +58,15 @@ final class ConsumerInfo {
     @Nullable final String producerClientId;
     @Nullable final String producerTransactionalId;
     final boolean isTransactional;
-    final ExecutableMethod<Object, ?> method;
     final HashMap<String, ExecutableMethod<Object, ?>> methods;
-    final String logMethod;
     final boolean autoStartup;
     final boolean isBatch;
     final boolean isBlocking;
     final Duration pollTimeout;
     @Nullable final Argument<?> consumerArg;
-    @Nullable final Argument<?> seekArg;
     @Nullable final Argument<?> ackArg;
     final boolean trackPartitions;
-    final List<String> sendToTopics;
     final boolean shouldSendOffsetsToTransaction;
-    final boolean returnsOneKafkaMessage;
-    final boolean returnsManyKafkaMessages;
 
     @SuppressWarnings("unchecked")
     ConsumerInfo(
@@ -97,30 +89,19 @@ final class ConsumerInfo {
         this.producerClientId = kafkaListener.stringValue("producerClientId").orElse(null);
         this.producerTransactionalId = kafkaListener.stringValue("producerTransactionalId").filter(StringUtils::isNotEmpty).orElse(null);
         this.isTransactional = producerTransactionalId != null;
-        // TBA: solveable with using method for this
-        this.logMethod = method.getDeclaringType().getSimpleName() + "#" + method.getName();
+        var firstMethod = methods.stream().findFirst().orElseThrow(() -> new MessagingSystemException("No methods found. Every KafkaListener must provide at least one method"));
         this.autoStartup = kafkaListener.booleanValue("autoStartup").orElse(true);
-        this.isBatch = method.isTrue(KafkaListener.class, "batch");
-        this.isBlocking = method.hasAnnotation(Blocking.class);
-        this.pollTimeout = method.getValue(KafkaListener.class, "pollTimeout", Duration.class).orElseGet(() -> Duration.ofMillis(100));
+        this.isBatch = firstMethod.isTrue(KafkaListener.class, "batch");
+        this.isBlocking = firstMethod.hasAnnotation(Blocking.class);
+        this.pollTimeout = firstMethod.getValue(KafkaListener.class, "pollTimeout", Duration.class).orElseGet(() -> Duration.ofMillis(100));
         // problematic
-        this.consumerArg = Arrays.stream(method.getArguments()).filter(arg -> Consumer.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
-        this.seekArg = Arrays.stream(method.getArguments()).filter(arg -> KafkaSeekOperations.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
-        this.ackArg = Arrays.stream(method.getArguments()).filter(arg -> Acknowledgement.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+        // this.consumerArg = Arrays.stream(method.getArguments()).filter(arg -> Consumer.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+        this.consumerArg = null;
+        // this.ackArg = Arrays.stream(method.getArguments()).filter(arg -> Acknowledgement.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+        this.ackArg = null;
         // end problematic
         this.trackPartitions = ackArg != null || offsetStrategy == OffsetStrategy.SYNC_PER_RECORD || offsetStrategy == OffsetStrategy.ASYNC_PER_RECORD;
-
-        // TBA: solveable with using method for this
-        this.sendToTopics = Optional.ofNullable(method.stringValues(SendTo.class)).filter(ArrayUtils::isNotEmpty).stream().flatMap(Arrays::stream).toList();
-
         this.shouldSendOffsetsToTransaction = offsetStrategy == OffsetStrategy.SEND_TO_TRANSACTION;
-
-        // TBA: solveable with using method for this
-        this.returnsOneKafkaMessage = method.getReturnType().getType().isAssignableFrom(KafkaMessage.class) || method.getReturnType().isAsyncOrReactive() && method.getReturnType().getFirstTypeVariable()
-            .map(t -> t.getType().isAssignableFrom(KafkaMessage.class)).orElse(false);
-        // TBA: solveable with using method for this
-        this.returnsManyKafkaMessages = Iterable.class.isAssignableFrom(method.getReturnType().getType()) && method.getReturnType().getFirstTypeVariable()
-            .map(t -> t.getType().isAssignableFrom(KafkaMessage.class)).orElse(false);
         this.methods = methods.stream()
             .collect(Collectors.toMap(
                 m -> m.getAnnotation(Topic.class).stringValue().orElseThrow(() -> new MessagingSystemException("Missing @Topic annotation")),
@@ -129,7 +110,7 @@ final class ConsumerInfo {
                 HashMap::new
             ));
         if (shouldSendOffsetsToTransaction) {
-            if (!isTransactional || !method.hasAnnotation(SendTo.class)) {
+            if (!isTransactional || !allMethodsHaveAnnotation(SendTo.class)) {
                 throw new MessagingSystemException("Offset strategy 'SEND_TO_TRANSACTION' can only be used when transaction is enabled and @SendTo is used");
             }
             if (shouldRedeliver) {
@@ -137,4 +118,36 @@ final class ConsumerInfo {
             }
         }
     }
+
+    private boolean allMethodsHaveAnnotation(Class<SendTo> sendToClass) {
+        return methods.values().stream().allMatch(m -> m.hasAnnotation(sendToClass));
+    }
+
+    public String logMethod(String topic) {
+        var method = methods.get(topic);
+        return method.getDeclaringType().getSimpleName() + "#" + method.getName();
+    }
+
+    public List<String> sendToTopics(String consumedRecordTopic) {
+        var method = methods.get(consumedRecordTopic);
+        return Optional.ofNullable(method.stringValues(SendTo.class)).filter(ArrayUtils::isNotEmpty).stream().flatMap(Arrays::stream).toList();
+    }
+
+    public boolean returnsOneKafkaMessage(String topic) {
+        var method = methods.get(topic);
+        return method.getReturnType().getType().isAssignableFrom(KafkaMessage.class) || method.getReturnType().isAsyncOrReactive() && method.getReturnType().getFirstTypeVariable()
+            .map(t -> t.getType().isAssignableFrom(KafkaMessage.class)).orElse(false);
+    }
+
+    public boolean returnsManyKafkaMessages(String topic) {
+        var method = methods.get(topic);
+        return Iterable.class.isAssignableFrom(method.getReturnType().getType()) && method.getReturnType().getFirstTypeVariable()
+            .map(t -> t.getType().isAssignableFrom(KafkaMessage.class)).orElse(false);
+    }
+
+    public Argument<?> seekArg(String topic) {
+        var method = methods.get(topic);
+        return Arrays.stream(method.getArguments()).filter(arg -> KafkaSeekOperations.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+    }
+
 }

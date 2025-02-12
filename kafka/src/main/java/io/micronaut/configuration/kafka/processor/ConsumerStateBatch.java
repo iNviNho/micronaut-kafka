@@ -67,7 +67,7 @@ final class ConsumerStateBatch extends ConsumerState {
             return kafkaConsumer.poll(info.pollTimeout);
         } catch (RecordDeserializationException ex) {
             // Try to honor the configured error strategy
-            LOG.trace("Kafka consumer [{}] failed to deserialize value while polling", info.logMethod, ex);
+            LOG.trace("Kafka consumer [{}] failed to deserialize value while polling", info.logMethod(ex.topicPartition().topic()), ex);
             // By default, seek past the record to continue consumption
             kafkaConsumer.seek(ex.topicPartition(), ex.offset() + 1);
             // The error strategy and the exception handler can still decide what to do about this record
@@ -86,7 +86,11 @@ final class ConsumerStateBatch extends ConsumerState {
                 boundArguments.put(info.ackArg, (KafkaAcknowledgement) () -> kafkaConsumer.commitSync(batchOffsets));
             }
             final ExecutableBinder<ConsumerRecords<?, ?>> batchBinder = new DefaultExecutableBinder<>(boundArguments);
-            final Object result = batchBinder.bind(info.method, kafkaConsumerProcessor.getBatchBinderRegistry(), consumerRecords).invoke(consumerBean);
+            // TODO: it will not yet work for batch consumers
+            // TODO: get topic from consumerRecords
+            var topic = consumerRecords.partitions().stream().map(TopicPartition::topic).findFirst().orElse(null);
+            var method = info.methods.get(topic);
+            final Object result = batchBinder.bind(method, kafkaConsumerProcessor.getBatchBinderRegistry(), consumerRecords).invoke(consumerBean);
             handleResult(normalizeResult(result), consumerRecords);
             failed = false;
         } catch (Exception e) {
