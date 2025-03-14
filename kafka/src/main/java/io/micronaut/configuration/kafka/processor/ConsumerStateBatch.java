@@ -23,6 +23,7 @@ import io.micronaut.core.async.publisher.Publishers;
 import io.micronaut.core.bind.DefaultExecutableBinder;
 import io.micronaut.core.bind.ExecutableBinder;
 import java.util.HashMap;
+import java.util.Optional;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -85,11 +86,15 @@ final class ConsumerStateBatch extends ConsumerState {
                 final Map<TopicPartition, OffsetAndMetadata> batchOffsets = getAckOffsets(consumerRecords);
                 boundArguments.put(info.ackArg, (KafkaAcknowledgement) () -> kafkaConsumer.commitSync(batchOffsets));
             }
-            final ExecutableBinder<ConsumerRecords<?, ?>> batchBinder = new DefaultExecutableBinder<>(boundArguments);
-            // TODO: it will not yet work for batch consumers
-            // TODO: get topic from consumerRecords
+            // TODO: It will not work for batch consumers YET
+            // TODO: Get topic from consumerRecords
+            // TODO: We should get a list of topics? Think about it
             var topic = consumerRecords.partitions().stream().map(TopicPartition::topic).findFirst().orElse(null);
+            Optional.ofNullable(info.consumerArg(topic)).ifPresent(argument -> boundArguments.put(argument, kafkaConsumer));
             var method = info.methods.get(topic);
+
+            final ExecutableBinder<ConsumerRecords<?, ?>> batchBinder = new DefaultExecutableBinder<>(boundArguments);
+
             final Object result = batchBinder.bind(method, kafkaConsumerProcessor.getBatchBinderRegistry(), consumerRecords).invoke(consumerBean);
             handleResult(normalizeResult(result), consumerRecords);
             failed = false;

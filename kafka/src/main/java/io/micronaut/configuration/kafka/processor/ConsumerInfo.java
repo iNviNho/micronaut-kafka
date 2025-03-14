@@ -31,12 +31,15 @@ import io.micronaut.inject.ExecutableMethod;
 import io.micronaut.messaging.annotation.SendTo;
 import io.micronaut.messaging.exceptions.MessagingSystemException;
 import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import org.apache.kafka.clients.consumer.Consumer;
 
 /**
  * Internal consumer info.
@@ -63,7 +66,7 @@ final class ConsumerInfo {
     final boolean isBatch;
     final boolean isBlocking;
     final Duration pollTimeout;
-    @Nullable final Argument<?> consumerArg;
+    final Map<String, Argument<?>> consumerArg;
     @Nullable final Argument<?> ackArg;
     final boolean trackPartitions;
     final boolean shouldSendOffsetsToTransaction;
@@ -94,13 +97,23 @@ final class ConsumerInfo {
         this.isBatch = firstMethod.isTrue(KafkaListener.class, "batch");
         this.isBlocking = firstMethod.hasAnnotation(Blocking.class);
         this.pollTimeout = firstMethod.getValue(KafkaListener.class, "pollTimeout", Duration.class).orElseGet(() -> Duration.ofMillis(100));
+        this.consumerArg = methods.stream().map(executableMethod -> {
+            var topic = executableMethod.getAnnotation(Topic.class).stringValue().orElseThrow(() -> new MessagingSystemException("Missing @Topic annotation"));
+            var consumerArg = Arrays.stream(executableMethod.getArguments()).filter(arg -> Consumer.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+            return consumerArg != null ? Map.entry(topic, consumerArg) : null;
+        })
+            .filter(Objects::nonNull)
+            .collect(Collectors.toMap(
+                Map.Entry::getKey,
+                Map.Entry::getValue,
+                (existing, replacement) -> existing,
+                HashMap::new
+            ));
         // problematic
-        // this.consumerArg = Arrays.stream(method.getArguments()).filter(arg -> Consumer.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
-        this.consumerArg = null;
         // this.ackArg = Arrays.stream(method.getArguments()).filter(arg -> Acknowledgement.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
         this.ackArg = null;
-        // end problematic
         this.trackPartitions = ackArg != null || offsetStrategy == OffsetStrategy.SYNC_PER_RECORD || offsetStrategy == OffsetStrategy.ASYNC_PER_RECORD;
+        // end problematic
         this.shouldSendOffsetsToTransaction = offsetStrategy == OffsetStrategy.SEND_TO_TRANSACTION;
         this.methods = methods.stream()
             .collect(Collectors.toMap(
@@ -148,6 +161,10 @@ final class ConsumerInfo {
     public Argument<?> seekArg(String topic) {
         var method = methods.get(topic);
         return Arrays.stream(method.getArguments()).filter(arg -> KafkaSeekOperations.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+    }
+
+    public Argument<?> consumerArg(String topic) {
+        return consumerArg.get(topic);
     }
 
 }

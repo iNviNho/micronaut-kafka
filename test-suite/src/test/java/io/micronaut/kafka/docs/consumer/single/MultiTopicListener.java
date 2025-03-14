@@ -7,6 +7,7 @@ import io.micronaut.configuration.kafka.annotation.OffsetReset;
 import io.micronaut.configuration.kafka.annotation.Topic;
 import io.micronaut.configuration.kafka.processor.ConsumerCreationStrategy;
 import io.micronaut.context.annotation.Requires;
+import org.apache.kafka.clients.consumer.Consumer;
 import org.slf4j.Logger;
 
 @Requires(property = "spec.name", value = "ConsumerCreationStrategyTest")
@@ -28,7 +29,8 @@ public class MultiTopicListener {
     }
 
     @Topic("foo")
-    void processFoo(String value) {
+    // Testing that ConsumerAware consumer works
+    void processFoo(Consumer consumer, String value) {
         LOG.info("Handling foo: {}", value);
         this.countFoo++;
     }

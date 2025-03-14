@@ -83,7 +83,6 @@ abstract class ConsumerState {
         this.subscriptions = Collections.unmodifiableSet(kafkaConsumer.subscription());
         this.autoPaused = !info.autoStartup;
         this.boundArguments = new HashMap<>(2);
-        Optional.ofNullable(info.consumerArg).ifPresent(argument -> boundArguments.put(argument, kafkaConsumer));
         this.closedState = ConsumerCloseState.NOT_STARTED;
         this.topicPartitionRetries = this.info.errorStrategy.isRetry() ? new HashMap<>() : null;
     }
