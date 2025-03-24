@@ -538,7 +538,6 @@ class KafkaConsumerProcessor
         final boolean hasPatterns = !patterns.isEmpty();
         final String logMethod = LOG.isInfoEnabled() ? logMethod(method) : null;
 
-        // TODO: Only one can be specified (maybe)
         if (!hasTopics && !hasPatterns) {
             throw new MessagingSystemException("Either a topic or a pattern must be specified for method: " + method);
         }

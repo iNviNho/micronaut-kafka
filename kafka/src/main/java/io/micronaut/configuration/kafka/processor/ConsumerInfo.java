@@ -28,6 +28,7 @@ import io.micronaut.core.type.Argument;
 import io.micronaut.core.util.ArrayUtils;
 import io.micronaut.core.util.StringUtils;
 import io.micronaut.inject.ExecutableMethod;
+import io.micronaut.messaging.Acknowledgement;
 import io.micronaut.messaging.annotation.SendTo;
 import io.micronaut.messaging.exceptions.MessagingSystemException;
 import java.util.HashMap;
@@ -54,6 +55,7 @@ final class ConsumerInfo {
     final boolean shouldRedeliver;
     final OffsetStrategy offsetStrategy;
     final ErrorStrategyValue errorStrategy;
+    final ConsumerCreationStrategy consumerCreationStrategy;
     final @Nullable Duration retryDelay;
     final int retryCount;
     final boolean shouldHandleAllExceptions;
@@ -61,13 +63,12 @@ final class ConsumerInfo {
     @Nullable final String producerClientId;
     @Nullable final String producerTransactionalId;
     final boolean isTransactional;
-    final HashMap<String, ExecutableMethod<Object, ?>> methods;
+    final Map<String, ExecutableMethod<Object, ?>> methods;
     final boolean autoStartup;
     final boolean isBatch;
     final boolean isBlocking;
     final Duration pollTimeout;
     final Map<String, Argument<?>> consumerArg;
-    @Nullable final Argument<?> ackArg;
     final boolean trackPartitions;
     final boolean shouldSendOffsetsToTransaction;
 
@@ -94,34 +95,14 @@ final class ConsumerInfo {
         this.isTransactional = producerTransactionalId != null;
         var firstMethod = methods.stream().findFirst().orElseThrow(() -> new MessagingSystemException("No methods found. Every KafkaListener must provide at least one method"));
         this.autoStartup = kafkaListener.booleanValue("autoStartup").orElse(true);
+        this.consumerCreationStrategy = kafkaListener.enumValue("consumerCreationStrategy", ConsumerCreationStrategy.class).orElse(ConsumerCreationStrategy.PER_TOPIC);
         this.isBatch = firstMethod.isTrue(KafkaListener.class, "batch");
         this.isBlocking = firstMethod.hasAnnotation(Blocking.class);
         this.pollTimeout = firstMethod.getValue(KafkaListener.class, "pollTimeout", Duration.class).orElseGet(() -> Duration.ofMillis(100));
-        this.consumerArg = methods.stream().map(executableMethod -> {
-            var topic = executableMethod.getAnnotation(Topic.class).stringValue().orElseThrow(() -> new MessagingSystemException("Missing @Topic annotation"));
-            var consumerArg = Arrays.stream(executableMethod.getArguments()).filter(arg -> Consumer.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
-            return consumerArg != null ? Map.entry(topic, consumerArg) : null;
-        })
-            .filter(Objects::nonNull)
-            .collect(Collectors.toMap(
-                Map.Entry::getKey,
-                Map.Entry::getValue,
-                (existing, replacement) -> existing,
-                HashMap::new
-            ));
-        // problematic
-        // this.ackArg = Arrays.stream(method.getArguments()).filter(arg -> Acknowledgement.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
-        this.ackArg = null;
-        this.trackPartitions = ackArg != null || offsetStrategy == OffsetStrategy.SYNC_PER_RECORD || offsetStrategy == OffsetStrategy.ASYNC_PER_RECORD;
-        // end problematic
+        this.consumerArg = resolveConsumerArg(methods);
         this.shouldSendOffsetsToTransaction = offsetStrategy == OffsetStrategy.SEND_TO_TRANSACTION;
-        this.methods = methods.stream()
-            .collect(Collectors.toMap(
-                m -> m.getAnnotation(Topic.class).stringValue().orElseThrow(() -> new MessagingSystemException("Missing @Topic annotation")),
-                m -> (ExecutableMethod<Object, ?>) m,
-                (existing, replacement) -> existing,
-                HashMap::new
-            ));
+        this.methods = resolveMethods(methods);
+        this.trackPartitions = anyMethodHasAckArg() || offsetStrategy == OffsetStrategy.SYNC_PER_RECORD || offsetStrategy == OffsetStrategy.ASYNC_PER_RECORD;
         if (shouldSendOffsetsToTransaction) {
             if (!isTransactional || !allMethodsHaveAnnotation(SendTo.class)) {
                 throw new MessagingSystemException("Offset strategy 'SEND_TO_TRANSACTION' can only be used when transaction is enabled and @SendTo is used");
@@ -129,6 +110,61 @@ final class ConsumerInfo {
             if (shouldRedeliver) {
                 throw new MessagingSystemException("Redelivery not supported for transactions in combination with @SendTo");
             }
+        }
+
+        if (consumerCreationStrategy == ConsumerCreationStrategy.PER_CLASS && isBatch) {
+            throw new MessagingSystemException("Batch mode is not yet supported with consumer creation strategy 'PER_CLASS'");
+        }
+    }
+
+    private Map<String, Argument<?>> resolveConsumerArg(
+        List<ExecutableMethod<?, ?>> methods
+    ) {
+        return methods.stream().map(item -> {
+            var keys = item.getAnnotation(Topic.class).getValues().get("value");
+            if (keys == null) {
+                keys = item.getAnnotation(Topic.class).getValues().get("patterns");
+                if (keys == null) {
+                    throw new MessagingSystemException("Missing @Topic annotation");
+                }
+            }
+            var consumerArg = Arrays.stream(item.getArguments()).filter(arg -> Consumer.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+            return consumerArg != null ? Arrays.stream((String[]) keys).map(key -> Map.entry(key, consumerArg)).collect(Collectors.toList()) : null;
+        })
+            .filter(Objects::nonNull)
+            .flatMap(List::stream)
+            .collect(Collectors.toMap(
+                Map.Entry::getKey,
+                Map.Entry::getValue,
+                (existing, replacement) -> existing,
+                HashMap::new
+            ));
+    }
+
+    private Map<String, ExecutableMethod<Object, ?>> resolveMethods(
+        List<ExecutableMethod<?, ?>> methods
+    ) {
+        try {
+            return methods.stream().map(item -> {
+                var keys = item.getAnnotation(Topic.class).getValues().get("value");
+                if (keys == null) {
+                    keys = item.getAnnotation(Topic.class).getValues().get("patterns");
+                    if (keys == null) {
+                        throw new MessagingSystemException("Missing @Topic annotation");
+                    }
+                }
+                return Arrays.stream((String[]) keys).map(key -> Map.entry(key, item)).collect(Collectors.toList());
+            }).flatMap(List::stream).collect(Collectors.toMap(
+                Map.Entry::getKey,
+                entry -> (ExecutableMethod<Object, ?>) entry.getValue()
+            ));
+        } catch (IllegalStateException e) {
+            if (e.getMessage().contains("Duplicate key")) {
+                var className = methods.stream().findFirst().get().getTargetMethod().getDeclaringClass();
+                throw new MessagingSystemException(
+                    "Duplicate topic found in @Topic annotation for " + className + " . Only one topic per listener is allowed.");
+            }
+            throw e;
         }
     }
 
@@ -167,4 +203,12 @@ final class ConsumerInfo {
         return consumerArg.get(topic);
     }
 
+    public Argument<?> ackArg(String topic) {
+        var method = methods.get(topic);
+        return Arrays.stream(method.getArguments()).filter(arg -> Acknowledgement.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+    }
+
+    private boolean anyMethodHasAckArg() {
+        return methods.values().stream().anyMatch(m -> Arrays.stream(m.getArguments()).anyMatch(arg -> Acknowledgement.class.isAssignableFrom(arg.getType())));
+    }
 }

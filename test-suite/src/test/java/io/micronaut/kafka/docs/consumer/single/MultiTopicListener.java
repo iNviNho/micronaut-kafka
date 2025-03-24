@@ -7,13 +7,12 @@ import io.micronaut.configuration.kafka.annotation.OffsetReset;
 import io.micronaut.configuration.kafka.annotation.Topic;
 import io.micronaut.configuration.kafka.processor.ConsumerCreationStrategy;
 import io.micronaut.context.annotation.Requires;
-import org.apache.kafka.clients.consumer.Consumer;
 import org.slf4j.Logger;
 
 @Requires(property = "spec.name", value = "ConsumerCreationStrategyTest")
 @KafkaListener(
     value = "myGroup",
-    consumerCreationStrategy = ConsumerCreationStrategy.PER_CLASS,
+    consumerCreationStrategy = ConsumerCreationStrategy.PER_TOPIC,
     offsetReset = OffsetReset.EARLIEST
 )
 public class MultiTopicListener {
@@ -22,15 +21,16 @@ public class MultiTopicListener {
     int countBoo = 0;
     int countFoo = 0;
 
-    @Topic({"boo", "too"})
+    @Topic({"boo"})
     void processBoo(String value) {
         LOG.info("Handling boo: {}", value);
         this.countBoo++;
     }
 
-    @Topic("foo")
+    // TODO: What about patterns?
+    @Topic(patterns = {"^f.*"})
     // Testing that ConsumerAware consumer works
-    void processFoo(Consumer consumer, String value) {
+    void processFoo(String value) {
         LOG.info("Handling foo: {}", value);
         this.countFoo++;
     }

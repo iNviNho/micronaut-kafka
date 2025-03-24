@@ -206,7 +206,7 @@ abstract class ConsumerState {
             return; // No consumer records to process
         }
         // Support Kotlin coroutines
-        // TODO: Tackle this
+        // TODO 2: Tackle this
         // if (info.method.isSuspend()) {
         //     Argument<?> lastArgument = info.method.getArguments()[info.method.getArguments().length - 1];
         //     boundArguments.put(lastArgument, null);
@@ -384,14 +384,14 @@ abstract class ConsumerState {
     }
 
     private Publisher<RecordMetadata> handleSendToError(Throwable error, ConsumerRecords<?, ?> consumerRecords, ConsumerRecord<?, ?> consumerRecord) {
-        // handleException("Error occurred processing record [" + consumerRecord + "] with Kafka reactive consumer [" + info.method + "]: " + error.getMessage(), error, consumerRecords, consumerRecord);
+        handleException("Error occurred processing record [" + consumerRecord + "] with Kafka reactive consumer [" + info.methods.get(consumerRecord.topic()) + "]: " + error.getMessage(), error, consumerRecords, consumerRecord);
 
         if (!info.shouldRedeliver) {
             return Flux.empty();
         }
 
         return redeliver(consumerRecord)
-            .doOnError(ex -> handleException("Redelivery failed for record [" + consumerRecord + "] with Kafka reactive consumer : " + error.getMessage(), ex, consumerRecords, consumerRecord));
+            .doOnError(ex -> handleException("Redelivery failed for record [" + consumerRecord + "] with Kafka reactive consumer [" + info.methods.get(consumerRecord.topic()) + "]: "+ error.getMessage(), ex, consumerRecords, consumerRecord));
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })

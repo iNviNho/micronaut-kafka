@@ -81,15 +81,13 @@ final class ConsumerStateBatch extends ConsumerState {
     @Override
     protected void processRecords(ConsumerRecords<?, ?> consumerRecords, @Nullable Map<TopicPartition, OffsetAndMetadata> currentOffsets) {
         try {
-            // Bind Acknowledgement argument
-            if (info.ackArg != null) {
-                final Map<TopicPartition, OffsetAndMetadata> batchOffsets = getAckOffsets(consumerRecords);
-                boundArguments.put(info.ackArg, (KafkaAcknowledgement) () -> kafkaConsumer.commitSync(batchOffsets));
-            }
-            // TODO: It will not work for batch consumers YET
-            // TODO: Get topic from consumerRecords
-            // TODO: We should get a list of topics? Think about it
             var topic = consumerRecords.partitions().stream().map(TopicPartition::topic).findFirst().orElse(null);
+
+            // Bind Acknowledgement argument
+            if (info.ackArg(topic) != null) {
+                final Map<TopicPartition, OffsetAndMetadata> batchOffsets = getAckOffsets(consumerRecords);
+                boundArguments.put(info.ackArg(topic), (KafkaAcknowledgement) () -> kafkaConsumer.commitSync(batchOffsets));
+            }
             Optional.ofNullable(info.consumerArg(topic)).ifPresent(argument -> boundArguments.put(argument, kafkaConsumer));
             var method = info.methods.get(topic);
 

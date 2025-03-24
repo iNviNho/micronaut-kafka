@@ -85,7 +85,7 @@ final class ConsumerStateSingle extends ConsumerState {
 
             final KafkaSeekOperations seek = Optional.ofNullable(info.seekArg(consumerRecord.topic())).map(x -> KafkaSeekOperations.newInstance()).orElse(null);
             Optional.ofNullable(info.seekArg(consumerRecord.topic())).ifPresent(argument -> boundArguments.put(argument, seek));
-            Optional.ofNullable(info.ackArg).ifPresent(argument -> boundArguments.put(argument, (KafkaAcknowledgement) () -> kafkaConsumer.commitSync(currentOffsets)));
+            Optional.ofNullable(info.ackArg(consumerRecord.topic())).ifPresent(argument -> boundArguments.put(argument, (KafkaAcknowledgement) () -> kafkaConsumer.commitSync(currentOffsets)));
             Optional.ofNullable(info.consumerArg(consumerRecord.topic())).ifPresent(argument -> boundArguments.put(argument, kafkaConsumer));
             try {
                 process(consumerRecord, consumerRecords);
