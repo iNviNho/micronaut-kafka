@@ -22,6 +22,7 @@ import io.micronaut.core.annotation.Nullable;
 import io.micronaut.core.async.publisher.Publishers;
 import io.micronaut.core.bind.DefaultExecutableBinder;
 import io.micronaut.core.bind.ExecutableBinder;
+import io.micronaut.core.type.Argument;
 import java.util.HashMap;
 import java.util.Optional;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -90,6 +91,11 @@ final class ConsumerStateBatch extends ConsumerState {
             }
             Optional.ofNullable(info.consumerArg(topic)).ifPresent(argument -> boundArguments.put(argument, kafkaConsumer));
             var method = info.methods.get(topic);
+            // Support Kotlin coroutines
+            if (method.isSuspend()) {
+                Argument<?> lastArgument = method.getArguments()[method.getArguments().length - 1];
+                boundArguments.put(lastArgument, null);
+            }
 
             final ExecutableBinder<ConsumerRecords<?, ?>> batchBinder = new DefaultExecutableBinder<>(boundArguments);
 

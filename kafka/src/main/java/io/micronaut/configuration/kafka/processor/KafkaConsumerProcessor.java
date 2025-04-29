@@ -308,7 +308,7 @@ class KafkaConsumerProcessor
         final DefaultKafkaConsumerConfiguration<?, ?> consumerConfiguration = new DefaultKafkaConsumerConfiguration<>(consumerConfigurationDefaults);
         final Properties properties = createConsumerProperties(consumerAnnotation, consumerConfiguration, clientId, groupId, offsetStrategy);
         configureDeserializers(method, consumerConfiguration);
-        submitConsumerThreads(method, clientId, groupId, offsetStrategy, topicAnnotations, consumerAnnotation, consumerConfiguration, properties, beanType, methods);
+        submitConsumerThreads(method, clientId, groupId, offsetStrategy, consumerCreationStrategy, topicAnnotations, consumerAnnotation, consumerConfiguration, properties, beanType, methods);
         kafkaListenersCreated.add(beanType.getName());
     }
 
@@ -494,6 +494,7 @@ class KafkaConsumerProcessor
                                        final String clientId,
                                        final String groupId,
                                        final OffsetStrategy offsetStrategy,
+                                       final ConsumerCreationStrategy consumerCreationStrategy,
                                        final List<AnnotationValue<Topic>> topicAnnotations,
                                        final AnnotationValue<KafkaListener> consumerAnnotation,
                                        final DefaultKafkaConsumerConfiguration<?, ?> consumerConfiguration,
@@ -519,7 +520,7 @@ class KafkaConsumerProcessor
                 //noinspection unchecked
                 ca.setKafkaConsumer(kafkaConsumer);
             }
-            setupConsumerSubscription(method, topicAnnotations, consumerBean, kafkaConsumer);
+            setupConsumerSubscription(method, topicAnnotations, consumerBean, kafkaConsumer, consumerCreationStrategy);
             kafkaConsumerSubscribedEventPublisher.publishEvent(new KafkaConsumerSubscribedEvent(kafkaConsumer));
             final ConsumerInfo consumerInfo = new ConsumerInfo(finalClientId, groupId, offsetStrategy, consumerAnnotation, methods);
             final ConsumerState consumerState = consumerInfo.isBatch ?
@@ -531,7 +532,12 @@ class KafkaConsumerProcessor
         }
     }
 
-    private static void setupConsumerSubscription(ExecutableMethod<?, ?> method, List<AnnotationValue<Topic>> topicAnnotations, Object consumerBean, Consumer<?, ?> kafkaConsumer) {
+    private static void setupConsumerSubscription(
+        ExecutableMethod<?, ?> method,
+        List<AnnotationValue<Topic>> topicAnnotations,
+        Object consumerBean,
+        Consumer<?, ?> kafkaConsumer,
+        ConsumerCreationStrategy consumerCreationStrategy) {
         final List<String> topicNames = topicAnnotations.stream().flatMap(a -> Arrays.stream(a.stringValues())).toList();
         final List<String> patterns = topicAnnotations.stream().flatMap(a -> Arrays.stream(a.stringValues("patterns"))).toList();
         final boolean hasTopics = !topicNames.isEmpty();
@@ -552,6 +558,9 @@ class KafkaConsumerProcessor
         }
 
         if (hasPatterns) {
+            if (consumerCreationStrategy.equals(ConsumerCreationStrategy.PER_CLASS)) {
+                throw new MessagingSystemException("Patterns are not supported for ConsumerCreationStrategy.PER_CLASS for method: " + method);
+            }
             try {
                 for (final String pattern : patterns) {
                     final Pattern compiledPattern = Pattern.compile(pattern);

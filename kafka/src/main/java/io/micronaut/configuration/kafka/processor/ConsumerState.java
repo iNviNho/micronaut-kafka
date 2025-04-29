@@ -22,6 +22,7 @@ import io.micronaut.core.annotation.Internal;
 import io.micronaut.core.annotation.NonNull;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.core.type.Argument;
+import io.micronaut.inject.ExecutableMethod;
 import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.Producer;
@@ -205,12 +206,6 @@ abstract class ConsumerState {
         if (consumerRecords == null || consumerRecords.isEmpty()) {
             return; // No consumer records to process
         }
-        // Support Kotlin coroutines
-        // TODO 2: Tackle this
-        // if (info.method.isSuspend()) {
-        //     Argument<?> lastArgument = info.method.getArguments()[info.method.getArguments().length - 1];
-        //     boundArguments.put(lastArgument, null);
-        // }
         processRecords(consumerRecords, currentOffsets);
         if (failed) {
             return;

@@ -25,6 +25,7 @@ import io.micronaut.core.annotation.Nullable;
 import io.micronaut.core.async.publisher.Publishers;
 import io.micronaut.core.bind.DefaultExecutableBinder;
 import io.micronaut.core.bind.ExecutableBinder;
+import io.micronaut.core.type.Argument;
 import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.RecordDeserializationException;
@@ -114,8 +115,13 @@ final class ConsumerStateSingle extends ConsumerState {
 
     private void process(ConsumerRecord<?, ?> consumerRecord,
         ConsumerRecords<?, ?> consumerRecords) {
-        final ExecutableBinder<ConsumerRecord<?, ?>> executableBinder = new DefaultExecutableBinder<>(boundArguments);
         var method = info.methods.get(consumerRecord.topic());
+        // Support Kotlin coroutines
+        if (method.isSuspend()) {
+            Argument<?> lastArgument = method.getArguments()[method.getArguments().length - 1];
+            boundArguments.put(lastArgument, null);
+        }
+        final ExecutableBinder<ConsumerRecord<?, ?>> executableBinder = new DefaultExecutableBinder<>(boundArguments);
         final Object result = executableBinder.bind(method, kafkaConsumerProcessor.getBinderRegistry(), consumerRecord).invoke(consumerBean);
         if (result != null) {
             final boolean isPublisher = Publishers.isConvertibleToPublisher(result);

@@ -22,15 +22,13 @@ public class MultiTopicListener {
     int countFoo = 0;
 
     @Topic({"boo"})
-    void processBoo(String value) {
+    void processBoo(Boo value) {
         LOG.info("Handling boo: {}", value);
         this.countBoo++;
     }
 
-    // TODO: What about patterns?
-    @Topic(patterns = {"^f.*"})
-    // Testing that ConsumerAware consumer works
-    void processFoo(String value) {
+    @Topic({"foo"})
+    void processFoo(Foo value) {
         LOG.info("Handling foo: {}", value);
         this.countFoo++;
     }
