@@ -72,6 +72,9 @@ final class ConsumerInfo {
     final boolean trackPartitions;
     final boolean shouldSendOffsetsToTransaction;
 
+    private final Map<String, Argument<?>> seekArgCache = new HashMap<>();
+    private final Map<String, Argument<?>> ackArgCache = new HashMap<>();
+
     @SuppressWarnings("unchecked")
     ConsumerInfo(
         String clientId,
@@ -172,40 +175,53 @@ final class ConsumerInfo {
         return methods.values().stream().allMatch(m -> m.hasAnnotation(sendToClass));
     }
 
-    public String logMethod(String topic) {
+    String logMethod(String topic) {
         var method = methods.get(topic);
         return method.getDeclaringType().getSimpleName() + "#" + method.getName();
     }
 
-    public List<String> sendToTopics(String consumedRecordTopic) {
+    List<String> sendToTopics(String consumedRecordTopic) {
         var method = methods.get(consumedRecordTopic);
         return Optional.ofNullable(method.stringValues(SendTo.class)).filter(ArrayUtils::isNotEmpty).stream().flatMap(Arrays::stream).toList();
     }
 
-    public boolean returnsOneKafkaMessage(String topic) {
+    boolean returnsOneKafkaMessage(String topic) {
         var method = methods.get(topic);
-        return method.getReturnType().getType().isAssignableFrom(KafkaMessage.class) || method.getReturnType().isAsyncOrReactive() && method.getReturnType().getFirstTypeVariable()
-            .map(t -> t.getType().isAssignableFrom(KafkaMessage.class)).orElse(false);
+        var returnType = method.getReturnType();
+        return returnType.getType().isAssignableFrom(KafkaMessage.class) ||
+            (returnType.isAsyncOrReactive() && returnType.getFirstTypeVariable()
+                .map(t -> t.getType().isAssignableFrom(KafkaMessage.class))
+                .orElse(false));
     }
 
-    public boolean returnsManyKafkaMessages(String topic) {
+    boolean returnsManyKafkaMessages(String topic) {
         var method = methods.get(topic);
         return Iterable.class.isAssignableFrom(method.getReturnType().getType()) && method.getReturnType().getFirstTypeVariable()
             .map(t -> t.getType().isAssignableFrom(KafkaMessage.class)).orElse(false);
     }
 
-    public Argument<?> seekArg(String topic) {
-        var method = methods.get(topic);
-        return Arrays.stream(method.getArguments()).filter(arg -> KafkaSeekOperations.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+    Argument<?> seekArg(String topic) {
+        return seekArgCache.computeIfAbsent(topic, t -> {
+            var method = methods.get(t);
+            return Arrays.stream(method.getArguments())
+                .filter(arg -> KafkaSeekOperations.class.isAssignableFrom(arg.getType()))
+                .findFirst()
+                .orElse(null);
+        });
     }
 
-    public Argument<?> consumerArg(String topic) {
+    Argument<?> consumerArg(String topic) {
         return consumerArg.get(topic);
     }
 
-    public Argument<?> ackArg(String topic) {
-        var method = methods.get(topic);
-        return Arrays.stream(method.getArguments()).filter(arg -> Acknowledgement.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+    Argument<?> ackArg(String topic) {
+        return ackArgCache.computeIfAbsent(topic, t -> {
+            var method = methods.get(t);
+            return Arrays.stream(method.getArguments())
+                .filter(arg -> Acknowledgement.class.isAssignableFrom(arg.getType()))
+                .findFirst()
+                .orElse(null);
+        });
     }
 
     private boolean anyMethodHasAckArg() {

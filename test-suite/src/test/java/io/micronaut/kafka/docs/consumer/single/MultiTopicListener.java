@@ -21,13 +21,13 @@ public class MultiTopicListener {
     int countBoo = 0;
     int countFoo = 0;
 
-    @Topic({"boo"})
+    @Topic(value = "boo")
     void processBoo(Boo value) {
         LOG.info("Handling boo: {}", value);
         this.countBoo++;
     }
 
-    @Topic({"foo"})
+    @Topic(value = "foo")
     void processFoo(Foo value) {
         LOG.info("Handling foo: {}", value);
         this.countFoo++;
