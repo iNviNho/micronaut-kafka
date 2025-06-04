@@ -33,6 +33,7 @@ import io.micronaut.messaging.annotation.SendTo;
 import io.micronaut.messaging.exceptions.MessagingSystemException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
@@ -102,9 +103,9 @@ final class ConsumerInfo {
         this.isBatch = firstMethod.isTrue(KafkaListener.class, "batch");
         this.isBlocking = firstMethod.hasAnnotation(Blocking.class);
         this.pollTimeout = firstMethod.getValue(KafkaListener.class, "pollTimeout", Duration.class).orElseGet(() -> Duration.ofMillis(100));
-        this.consumerArg = resolveConsumerArg(methods);
+        this.methods = resolveToTopicToMethodBinding(methods);
+        this.consumerArg = resolveConsumerArg(this.methods);
         this.shouldSendOffsetsToTransaction = offsetStrategy == OffsetStrategy.SEND_TO_TRANSACTION;
-        this.methods = resolveMethods(methods);
         this.trackPartitions = anyMethodHasAckArg() || offsetStrategy == OffsetStrategy.SYNC_PER_RECORD || offsetStrategy == OffsetStrategy.ASYNC_PER_RECORD;
         if (shouldSendOffsetsToTransaction) {
             if (!isTransactional || !allMethodsHaveAnnotation(SendTo.class)) {
@@ -120,10 +121,11 @@ final class ConsumerInfo {
         }
     }
 
-    private Map<String, Argument<?>> resolveConsumerArg(
+    @SuppressWarnings("unchecked")
+    private Map<String, ExecutableMethod<Object, ?>> resolveToTopicToMethodBinding(
         List<ExecutableMethod<?, ?>> methods
     ) {
-        return methods.stream().map(item -> {
+        return methods.stream().flatMap(item -> {
             var keys = item.getAnnotation(Topic.class).getValues().get("value");
             if (keys == null) {
                 keys = item.getAnnotation(Topic.class).getValues().get("patterns");
@@ -131,44 +133,19 @@ final class ConsumerInfo {
                     throw new MessagingSystemException("Missing @Topic annotation");
                 }
             }
-            var consumerArg = Arrays.stream(item.getArguments()).filter(arg -> Consumer.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
-            return consumerArg != null ? Arrays.stream((String[]) keys).map(key -> Map.entry(key, consumerArg)).collect(Collectors.toList()) : null;
-        })
-            .filter(Objects::nonNull)
-            .flatMap(List::stream)
-            .collect(Collectors.toMap(
-                Map.Entry::getKey,
-                Map.Entry::getValue,
-                (existing, replacement) -> existing,
-                HashMap::new
-            ));
+            return Arrays.stream((String[]) keys).map(key -> Map.entry(key, item));
+        }).collect(Collectors.toMap(Entry::getKey, item -> (ExecutableMethod<Object, ?>)item.getValue()));
     }
 
-    private Map<String, ExecutableMethod<Object, ?>> resolveMethods(
-        List<ExecutableMethod<?, ?>> methods
+    private Map<String, Argument<?>> resolveConsumerArg(
+        Map<String, ExecutableMethod<Object, ?>> methods
     ) {
-        try {
-            return methods.stream().map(item -> {
-                var keys = item.getAnnotation(Topic.class).getValues().get("value");
-                if (keys == null) {
-                    keys = item.getAnnotation(Topic.class).getValues().get("patterns");
-                    if (keys == null) {
-                        throw new MessagingSystemException("Missing @Topic annotation");
-                    }
-                }
-                return Arrays.stream((String[]) keys).map(key -> Map.entry(key, item)).collect(Collectors.toList());
-            }).flatMap(List::stream).collect(Collectors.toMap(
-                Map.Entry::getKey,
-                entry -> (ExecutableMethod<Object, ?>) entry.getValue()
-            ));
-        } catch (IllegalStateException e) {
-            if (e.getMessage().contains("Duplicate key")) {
-                var className = methods.stream().findFirst().get().getTargetMethod().getDeclaringClass();
-                throw new MessagingSystemException(
-                    "Duplicate topic found in @Topic annotation for " + className + " . Only one topic per listener is allowed.");
-            }
-            throw e;
-        }
+        return methods.entrySet().stream().map(entry -> {
+            var consumerArg = Arrays.stream(entry.getValue().getArguments()).filter(arg -> Consumer.class.isAssignableFrom(arg.getType())).findFirst().orElse(null);
+            return consumerArg != null ? Map.entry(entry.getKey(), consumerArg) : null;
+        })
+            .filter(Objects::nonNull)
+            .collect(Collectors.toMap(Entry::getKey, Entry::getValue));
     }
 
     private boolean allMethodsHaveAnnotation(Class<SendTo> sendToClass) {
